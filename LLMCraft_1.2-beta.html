@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>LLMCraft v1.3 - 自然地形版</title>
+    <style>
+        body { margin: 0; background: #87CEEB; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #ui { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: white; padding: 10px; font-size: 12px; z-index: 10; pointer-events: none; border-radius: 4px; line-height: 1.5; }
+        #hotbar { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 5px; background: rgba(0,0,0,0.5); padding: 5px; border-radius: 5px; z-index: 100; }
+        .slot { width: 50px; height: 50px; background: rgba(40,40,40,0.8); border: 3px solid #555; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; font-size: 11px; position: relative; }
+        .slot.active { border-color: #fff; background: rgba(255,255,255,0.2); }
+        .count { position: absolute; bottom: 2px; right: 5px; color: #ffff00; font-weight: bold; font-size: 14px; text-shadow: 1px 1px #000; }
+        #hp-ui { position: absolute; bottom: 85px; left: 50%; transform: translateX(-50%); color: #ff4444; font-size: 20px; text-shadow: 2px 2px #000; }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 16px; height: 16px; border: 2px solid white; transform: translate(-50%, -50%); mix-blend-mode: difference; pointer-events: none; }
+        #save-status { position: fixed; top: 20px; right: 20px; color: #00ff00; font-weight: bold; display: none; background: rgba(0,0,0,0.7); padding: 8px 15px; border-radius: 4px; z-index: 2000; border: 1px solid #00ff00; }
+        #crafting-screen { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+            background: #c6c6c6; border: 4px solid #555; padding: 20px; 
+            display: none; grid-template-columns: repeat(3, 50px) 40px 60px; gap: 10px; align-items: center;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5); z-index: 1000;
+        }
+        .craft-grid { display: grid; grid-template-columns: repeat(3, 50px); gap: 5px; }
+        .craft-slot { width: 50px; height: 50px; background: #8b8b8b; border: 2px solid #373737; cursor: pointer; display: flex; align-items: center; justify-content: center; position: relative; }
+        .craft-slot:hover { background: #a8a8a8; }
+        #craft-result { width: 60px; height: 60px; background: #8b8b8b; border: 3px solid #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+        #close-hint { position: absolute; bottom: -30px; left: 50%; transform: translateX(-50%); color: white; font-size: 14px; width: 100%; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    [W,A,S,D] 移動 | [Space] 跳躍/游泳<br>
+    [1-7] 切換物品 | [左鍵] 挖掘 | [右鍵] 放置/互動<br>
+    [E] 合成 | [K] 存檔 | [L] 讀檔 | [R] 重刷<br>
+    <span style="color: #ffeb3b;">座標: <span id="pos">0,0,0</span></span>
+</div>
+
+<div id="save-status">遊戲已存檔</div>
+<div id="hp-ui">❤️ HP: <span id="hp">100</span></div>
+<div id="crosshair"></div>
+
+<div id="crafting-screen">
+    <div class="craft-grid" id="craft-input-grid">
+        <div class="craft-slot" data-idx="0"></div><div class="craft-slot" data-idx="1"></div><div class="craft-slot" data-idx="2"></div>
+        <div class="craft-slot" data-idx="3"></div><div class="craft-slot" data-idx="4"></div><div class="craft-slot" data-idx="5"></div>
+        <div class="craft-slot" data-idx="6"></div><div class="craft-slot" data-idx="7"></div><div class="craft-slot" data-idx="8"></div>
+    </div>
+    <div style="font-size: 30px; text-align: center;">➡</div>
+    <div id="craft-result"></div>
+    <div id="close-hint">按 [E] 或 [ESC] 關閉</div>
+</div>
+
+<div id="hotbar">
+    <div id="slot-0" class="slot active">草<div class="count" id="cnt-0">10</div></div>
+    <div id="slot-1" class="slot">土<div class="count" id="cnt-1">10</div></div>
+    <div id="slot-2" class="slot">石<div class="count" id="cnt-2">10</div></div>
+    <div id="slot-3" class="slot">木<div class="count" id="cnt-3">10</div></div>
+    <div id="slot-4" class="slot">葉<div class="count" id="cnt-4">10</div></div>
+    <div id="slot-6" class="slot">台<div class="count" id="cnt-6">1</div></div>
+    <div id="slot-10" class="slot">沙<div class="count" id="cnt-10">10</div></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+    // --- 簡易雜訊函式 (取代 Math.sin 增加地形隨機感) ---
+    const noise = {
+        p: new Uint8Array(512),
+        init() {
+            const data = Array.from({length: 256}, (_, i) => i);
+            for(let i=255; i>0; i--) {
+                const j = Math.floor(Math.random()*(i+1));
+                [data[i], data[j]] = [data[j], data[i]];
+            }
+            for(let i=0; i<512; i++) this.p[i] = data[i & 255];
+        },
+        fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); },
+        lerp(t, a, b) { return a + t * (b - a); },
+        grad(hash, x, y, z) {
+            const h = hash & 15;
+            const u = h < 8 ? x : y;
+            const v = h < 4 ? y : h === 12 || h === 14 ? x : z;
+            return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
+        },
+        perlin(x, y, z) {
+            const X = Math.floor(x) & 255; const Y = Math.floor(y) & 255; const Z = Math.floor(z) & 255;
+            x -= Math.floor(x); y -= Math.floor(y); z -= Math.floor(z);
+            const u = this.fade(x), v = this.fade(y), w = this.fade(z);
+            const A = this.p[X]+Y, AA = this.p[A]+Z, AB = this.p[A+1]+Z, B = this.p[X+1]+Y, BA = this.p[B]+Z, BB = this.p[B+1]+Z;
+            return this.lerp(w, this.lerp(v, this.lerp(u, this.grad(this.p[AA], x, y, z), this.grad(this.p[BA], x-1, y, z)),
+                this.lerp(u, this.grad(this.p[AB], x, y-1, z), this.grad(this.p[BB], x-1, y-1, z))),
+                this.lerp(v, this.lerp(u, this.grad(this.p[AA+1], x, y, z-1), this.grad(this.p[BA+1], x-1, y, z-1)),
+                this.lerp(u, this.grad(this.p[AB+1], x, y-1, z-1), this.grad(this.p[BB+1], x-1, y-1, z-1))));
+        }
+    };
+    noise.init();
+
+    // --- 核心初始化 ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB);
+    scene.fog = new THREE.Fog(0x87CEEB, 25, 75);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+    scene.add(ambientLight);
+    const sunLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    sunLight.position.set(10, 50, 10);
+    scene.add(sunLight);
+
+    const CHUNK_SIZE = 12;
+    const RENDER_DIST = 3;
+    let worldData = new Map();
+    const chunks = new Map();
+    const collisionBlocks = [];
+    const dropEntities = [];
+    const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+    const dropGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+    
+    // blockNames = ["草", "土", "石", "木", "葉", "基岩", "合成台", "木板", "石磚", "水", "沙"]
+    let inventory = [10, 10, 10, 10, 10, 1, 1, 0, 0, 10, 10];
+    const blockNames = ["草", "土", "石", "木", "葉", "基岩", "合成台", "木板", "石磚", "水", "沙"];
+    let currentSlot = 0, vY = 0, keys = {}, isCraftingOpen = false;
+    let craftInput = Array(9).fill(null);
+
+    const mats = [
+        new THREE.MeshLambertMaterial({ color: 0x567d46 }), // 0 草
+        new THREE.MeshLambertMaterial({ color: 0x8b5a2b }), // 1 土
+        new THREE.MeshLambertMaterial({ color: 0x808080 }), // 2 石
+        new THREE.MeshLambertMaterial({ color: 0x614126 }), // 3 木
+        new THREE.MeshLambertMaterial({ color: 0x2d5a27 }), // 4 葉
+        new THREE.MeshLambertMaterial({ color: 0x111111 }), // 5 基岩
+        new THREE.MeshLambertMaterial({ color: 0xab7d4b }), // 6 合成台
+        new THREE.MeshLambertMaterial({ color: 0xd2b48c }), // 7 木板
+        new THREE.MeshLambertMaterial({ color: 0x555555 }), // 8 石磚
+        new THREE.MeshLambertMaterial({ color: 0x1e90ff, transparent: true, opacity: 0.6 }), // 9 水
+        new THREE.MeshLambertMaterial({ color: 0xddd2a3 }), // 10 沙
+    ];
+
+    const recipes = [
+        { input: [3,null,null,null,null,null,null,null,null], output: 7, count: 4 },
+        { input: [7,7,null,7,7,null,null,null,null], output: 6, count: 1 },
+        { input: [2,2,null,2,2,null,null,null,null], output: 8, count: 4 }
+    ];
+
+    // --- 優化地形生成演算法 ---
+    function getHeight(x, z) {
+        // 多層雜訊疊加 (FBM - Fractional Brownian Motion)
+        const scale1 = 0.05, amp1 = 8;  // 大山丘
+        const scale2 = 0.15, amp2 = 2;  // 小起伏
+        
+        let h = noise.perlin(x * scale1, 0, z * scale1) * amp1;
+        h += noise.perlin(x * scale2, 10, z * scale2) * amp2;
+        
+        return Math.floor(h);
+    }
+
+    function generateChunkData(cx, cz) {
+        const key = `${cx},${cz}`;
+        if (chunks.has(key + "_data")) return;
+
+        for (let x = 0; x < CHUNK_SIZE; x++) {
+            for (let z = 0; z < CHUNK_SIZE; z++) {
+                const wx = cx * CHUNK_SIZE + x;
+                const wz = cz * CHUNK_SIZE + z;
+                const h = getHeight(wx, wz);
+
+                // 設定地表類型
+                let surfaceType = 0; // 預設草
+                if (h < -1) surfaceType = 10; // 低窪處設為沙灘
+                else if (h > 5) surfaceType = 2; // 高山設為石頭
+
+                // 放置方塊
+                worldData.set(`${wx},${h},${wz}`, surfaceType);
+                for (let y = h - 1; y > h - 4; y--) worldData.set(`${wx},${y},${wz}`, 1); // 泥土層
+                for (let y = h - 4; y > -12; y--) worldData.set(`${wx},${y},${wz}`, 2); // 岩石層
+                worldData.set(`${wx},-12,${wz}`, 5); // 基岩
+
+                // 水位高度設定在 -1
+                for (let y = -1; y >= h; y--) {
+                    if (!worldData.has(`${wx},${y},${wz}`)) worldData.set(`${wx},${y},${wz}`, 9);
+                }
+
+                // 樹木生成 (只在草地上)
+                if (surfaceType === 0 && h >= 0) {
+                    const treeSeed = Math.abs((Math.sin(wx * 12.9 + wz * 78.2) * 437) % 1);
+                    if (treeSeed < 0.02) {
+                        for(let th=1; th<=4; th++) worldData.set(`${wx},${h+th},${wz}`, 3);
+                        for (let lx = -1; lx <= 1; lx++) {
+                            for (let lz = -1; lz <= 1; lz++) {
+                                worldData.set(`${wx+lx},${h+4},${wz+lz}`, 4);
+                                worldData.set(`${wx+lx},${h+5},${wz+lz}`, 4);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        chunks.set(key + "_data", true);
+    }
+
+    function isExposed(x, y, z) {
+        const neighbors = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+        for (let n of neighbors) {
+            const neighborType = worldData.get(`${x+n[0]},${y+n[1]},${z+n[2]}`);
+            if (neighborType === undefined || neighborType === 9) return true;
+        }
+        return false;
+    }
+
+    function renderChunks(px, pz) {
+        for (let x = px - RENDER_DIST; x <= px + RENDER_DIST; x++) {
+            for (let z = pz - RENDER_DIST; z <= pz + RENDER_DIST; z++) {
+                const key = `${x},${z}`;
+                if (chunks.has(key)) continue;
+
+                generateChunkData(x, z);
+                const group = new THREE.Group();
+
+                for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+                    for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+                        const wx = x * CHUNK_SIZE + lx;
+                        const wz = z * CHUNK_SIZE + lz;
+                        for (let y = -12; y <= 15; y++) {
+                            const type = worldData.get(`${wx},${y},${wz}`);
+                            if (type !== undefined) {
+                                if (type === 9 || isExposed(wx, y, wz)) {
+                                    const mesh = new THREE.Mesh(boxGeo, mats[type]);
+                                    mesh.position.set(wx, y, wz);
+                                    mesh.userData = { type, wx, y, wz, isWater: type === 9, isBedrock: type === 5, isCraftingTable: type === 6 };
+                                    group.add(mesh);
+                                }
+                            }
+                        }
+                    }
+                }
+                scene.add(group);
+                chunks.set(key, { group, x, z });
+            }
+        }
+    }
+
+    // --- 功能函式 (UI, 存檔, 碰撞) ---
+    function saveGame() {
+        const saveData = {
+            worldData: Array.from(worldData.entries()),
+            inventory: inventory,
+            pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+            rot: { x: camera.rotation.x, y: camera.rotation.y }
+        };
+        localStorage.setItem('LLMCraft_Save_v1.3', JSON.stringify(saveData));
+        showStatus("存檔成功！");
+    }
+
+    function loadGame() {
+        let saved = localStorage.getItem('LLMCraft_Save_v1.3');
+        if (!saved) return;
+        const data = JSON.parse(saved);
+        chunks.forEach(v => { if(v.group) scene.remove(v.group); });
+        chunks.clear();
+        worldData = new Map(data.worldData);
+        inventory = data.inventory;
+        camera.position.set(data.pos.x, data.pos.y, data.pos.z);
+        camera.rotation.set(data.rot.x, data.rot.y, 0);
+        updateUI();
+        showStatus("存檔已載入");
+    }
+
+    function showStatus(text) {
+        const el = document.getElementById('save-status');
+        el.innerText = text; el.style.display = 'block';
+        setTimeout(() => el.style.display = 'none', 2000);
+    }
+
+    function toggleCrafting() {
+        isCraftingOpen = !isCraftingOpen;
+        document.getElementById('crafting-screen').style.display = isCraftingOpen ? 'grid' : 'none';
+        if (isCraftingOpen) document.exitPointerLock();
+        else { renderer.domElement.requestPointerLock(); clearCrafting(); }
+    }
+
+    function clearCrafting() { craftInput.fill(null); renderCrafting(); }
+
+    function renderCrafting() {
+        document.querySelectorAll('.craft-slot').forEach((s, i) => {
+            s.innerText = craftInput[i] !== null ? blockNames[craftInput[i]] : "";
+        });
+        const res = document.getElementById('craft-result');
+        const match = recipes.find(r => JSON.stringify(r.input) === JSON.stringify(craftInput));
+        if (match) {
+            res.innerText = `${blockNames[match.output]} x${match.count}`;
+            res.dataset.res = match.output; res.dataset.cnt = match.count;
+        } else { res.innerText = ""; delete res.dataset.res; }
+    }
+
+    document.querySelectorAll('.craft-slot').forEach(slot => {
+        slot.addEventListener('click', () => {
+            const realID = getRealIDFromSlot(currentSlot);
+            if (inventory[realID] > 0) {
+                craftInput[parseInt(slot.dataset.idx)] = realID;
+                inventory[realID]--; updateUI(); renderCrafting();
+            }
+        });
+    });
+
+    function getRealIDFromSlot(s) {
+        const map = [0, 1, 2, 3, 4, 6, 10];
+        return map[s];
+    }
+
+    document.getElementById('craft-result').addEventListener('click', function() {
+        if (this.dataset.res) {
+            inventory[parseInt(this.dataset.res)] += parseInt(this.dataset.cnt);
+            clearCrafting(); updateUI();
+        }
+    });
+
+    function updateUI() {
+        const hotbarMap = [0, 1, 2, 3, 4, 6, 10];
+        hotbarMap.forEach((id) => {
+            const el = document.getElementById(`cnt-${id}`);
+            if (el) el.innerText = inventory[id];
+        });
+        document.getElementById('pos').innerText = `${Math.round(camera.position.x)}, ${Math.round(camera.position.y)}, ${Math.round(camera.position.z)}`;
+    }
+
+    function update() {
+        requestAnimationFrame(update);
+        if (isCraftingOpen) return;
+
+        const px = Math.floor(camera.position.x / CHUNK_SIZE);
+        const pz = Math.floor(camera.position.z / CHUNK_SIZE);
+        renderChunks(px, pz);
+
+        collisionBlocks.length = 0;
+        chunks.forEach((val, key) => {
+            if (key.includes("_data")) return;
+            if (Math.abs(val.x - px) > RENDER_DIST + 1 || Math.abs(val.z - pz) > RENDER_DIST + 1) {
+                scene.remove(val.group);
+                chunks.delete(key);
+            } else {
+                val.group.children.forEach(b => collisionBlocks.push(b));
+            }
+        });
+
+        let inWater = false;
+        for(let b of collisionBlocks) {
+            if(b.userData.isWater && camera.position.distanceTo(b.position) < 1.2) { inWater = true; break; }
+        }
+
+        const speed = inWater ? 0.08 : 0.18;
+        const dir = new THREE.Vector3();
+        if (keys['KeyW']) dir.z -= 1; if (keys['KeyS']) dir.z += 1;
+        if (keys['KeyA']) dir.x -= 1; if (keys['KeyD']) dir.x += 1;
+        dir.applyQuaternion(camera.quaternion);
+        dir.y = 0; dir.normalize();
+
+        const oldX = camera.position.x; camera.position.x += dir.x * speed;
+        if (checkCollision()) camera.position.x = oldX;
+        const oldZ = camera.position.z; camera.position.z += dir.z * speed;
+        if (checkCollision()) camera.position.z = oldZ;
+
+        vY -= inWater ? 0.01 : 0.015;
+        camera.position.y += vY;
+        if (checkCollision()) {
+            camera.position.y -= vY;
+            vY = 0;
+            if (keys['Space']) vY = inWater ? 0.15 : 0.22;
+        } else if (inWater && keys['Space']) {
+            vY = 0.1;
+        }
+
+        for (let i = dropEntities.length - 1; i >= 0; i--) {
+            const d = dropEntities[i]; d.rotation.y += 0.05;
+            if (camera.position.distanceTo(d.position) < 1.5) {
+                inventory[d.userData.type]++; updateUI(); scene.remove(d); dropEntities.splice(i, 1);
+            }
+        }
+
+        renderer.render(scene, camera);
+        updateUI();
+    }
+
+    function checkCollision() {
+        const r = 0.3;
+        for (let b of collisionBlocks) {
+            if (b.userData.isWater) continue;
+            if (Math.abs(camera.position.x - b.position.x) < 0.5 + r &&
+                Math.abs(camera.position.z - b.position.z) < 0.5 + r &&
+                Math.abs(camera.position.y - 1 - b.position.y) < 1.0) return true;
+        }
+        return false;
+    }
+
+    // --- 事件監聽 ---
+    document.addEventListener('mousedown', (e) => {
+        if (isCraftingOpen) return;
+        if (document.pointerLockElement !== renderer.domElement) { renderer.domElement.requestPointerLock(); return; }
+        
+        const ray = new THREE.Raycaster(); ray.setFromCamera(new THREE.Vector2(0,0), camera);
+        const intersects = ray.intersectObjects(collisionBlocks);
+        const hit = intersects[0];
+        
+        if (hit && hit.distance < 5) {
+            const o = hit.object.userData;
+            if (e.button === 2) { 
+                if (o.isCraftingTable) { toggleCrafting(); } 
+                else {
+                    const realID = getRealIDFromSlot(currentSlot);
+                    if (inventory[realID] > 0) {
+                        const p = hit.object.position.clone().add(hit.face.normal);
+                        worldData.set(`${p.x},${p.y},${p.z}`, realID);
+                        inventory[realID]--; 
+                        refreshArea(p.x, p.z);
+                    }
+                }
+            } else if (e.button === 0 && !o.isBedrock) { 
+                worldData.delete(`${o.wx},${o.y},${o.wz}`);
+                if (!o.isWater) {
+                    const drop = new THREE.Mesh(dropGeo, mats[o.type]);
+                    drop.position.set(o.wx, o.y, o.wz); drop.userData.type = o.type;
+                    scene.add(drop); dropEntities.push(drop);
+                }
+                refreshArea(o.wx, o.wz);
+            }
+        }
+    });
+
+    function refreshArea(x, z) {
+        const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE);
+        for(let ox=-1; ox<=1; ox++) {
+            for(let oz=-1; oz<=1; oz++) {
+                const key = `${cx+ox},${cz+oz}`;
+                if (chunks.has(key)) {
+                    scene.remove(chunks.get(key).group);
+                    chunks.delete(key);
+                }
+            }
+        }
+    }
+
+    document.addEventListener('keydown', e => {
+        keys[e.code] = true;
+        if (e.code === 'KeyE') toggleCrafting();
+        if (e.code === 'KeyK') saveGame();
+        if (e.code === 'KeyL') loadGame();
+        if (e.code === 'KeyR') { location.reload(); }
+        if (e.code === 'Escape' && isCraftingOpen) toggleCrafting();
+        
+        if (e.key >= '1' && e.key <= '7') {
+            currentSlot = parseInt(e.key) - 1;
+            document.querySelectorAll('.slot').forEach(s => s.classList.remove('active'));
+            const map = [0, 1, 2, 3, 4, 6, 10];
+            document.getElementById(`slot-${map[currentSlot]}`).classList.add('active'); 
+        }
+    });
+    document.addEventListener('keyup', e => keys[e.code] = false);
+    document.addEventListener('mousemove', e => {
+        if (document.pointerLockElement) {
+            camera.rotation.y -= e.movementX * 0.002;
+            camera.rotation.x = Math.max(-1.5, Math.min(1.5, camera.rotation.x - e.movementY * 0.002));
+        }
+    });
+
+    camera.rotation.order = 'YXZ';
+    camera.position.set(0, 15, 0);
+    update();
+    document.addEventListener('contextmenu', e => e.preventDefault());
+</script>
+</body>
+</html>
